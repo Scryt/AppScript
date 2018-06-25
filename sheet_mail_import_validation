@@ -1,0 +1,169 @@
+// <----- Global vars for whole document ----->
+var ui = SpreadsheetApp.getUi();
+var cfg = getSheet('cfg');
+var import = getSheet('import');
+var invalid = getSheet('invalid');
+var afterValidation = getSheet('afterValidation');
+var test = getSheet('test');
+
+// <----- Menu appearence ----->
+function onOpen() {
+  ui.createMenu('Import validation')
+  .addItem('Import data from different Spreadsheet', 'importFromSpreadsheet')
+  .addSeparator()
+  .addItem('Validate Sheet', 'validateColumns')
+  //        .addSeparator()
+  //        .addItem('ColumnName', 'getColumnByNames')
+  .addToUi();
+}
+
+function validateEverything() {
+  validateColumnNames();
+  //  informUser(emptyCol);
+}
+
+// <----- Document validation (if there are required sheets to proceed) ----->
+function getSheet(sheetName, createSheet) {
+  var configSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  var ui = SpreadsheetApp.getUi();
+  if (!configSheet) {
+    if (createSheet) {
+      configSheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet(sheetName);
+      deleteEmptyRows(configSheet, 2, 2);
+    } else {
+      ui.alert('There is no "' + sheetName + '" sheet. Please add "' + sheetName + '" sheet with proper data');
+    }
+  }
+  return configSheet;
+}
+
+//  <----- Import data from another spreadsheet ----->
+function importFromSpreadsheet(){
+  var link = cfg.getRange(4,1).getValue();
+  var tab = cfg.getRange(4,2).getValue();
+  var destination = SpreadsheetApp.getActiveSpreadsheet();
+  var target = SpreadsheetApp.openByUrl(link).getSheetByName(tab); // ss = spreadsheet
+  
+  target.copyTo(destination);                                                                                         // paste the sheet to the current spreadsheet
+  
+  var sheetNum = destination.getSheets();
+  var numOfSS = sheetNum.length;
+  // Rename spreadsheet from Copy of XYZ to import
+  for(var nextNum = 0; nextNum < numOfSS; nextNum++){
+    var sheetNames = sheetNum[nextNum].getSheetName();
+    if(sheetNames.match(/copy.*/gmi) != null){                                                                      //new sheet is pasted with copy at the beginning, S&D
+      try{
+        destination.getSheetByName(sheetNames).setName('import');
+      }catch(err){
+        Logger.log(err);
+        ui.alert('Sheet named "import" already exists, please delete or rename sheet named "import" ');
+      }
+    }
+  }
+}
+
+function clearSheet(sheetName) {
+  var active = getSheet(sheetName);
+  var numCol = active.getMaxColumns();
+  var numRow = active.getMaxRows();
+  
+  numCol -= 1;
+  numRow -= 1;
+  
+  try{
+    active.deleteColumns(1, numCol);
+  }catch(err){
+    Logger.log(err)
+  }
+  try{
+    active.deleteRows(1, numRow);
+  }catch(err){
+    Logger.log(err);
+  }
+  
+  active.clear();
+}
+
+function validateColumnNames() {
+  // <----- Clear afterValidation sheet before validation ----->
+  clearSheet('invalid');
+  clearSheet('afterValidation');
+  
+  var import = getSheet('import');
+  var invalid = getSheet('invalid');
+  var numCol = import.getMaxColumns();                                                                                // Number of all columns in spreedsheet
+  var numRow = import.getMaxRows();                                                                                   // Number of all rows in spreedsheet
+  
+  var numNotEmpCol = 0;                                                                                               // Number of not empty columns (starting value 0)
+  var emptyCol = 0;                                                                                                   // Variable to count appearence of empty columns (for user alert only);
+  var nextNum = 0;                                                                                                    // Next numbers just for loop purpose
+  var mailCol;                                                                                                        // Stores Col number in which emails are saved in impor sheet
+  
+  var arrayCol = import.getRange(1, 1, 1, numCol).getValues();                                                        // Get names of the columns as an array to iterate after
+  arrayCol = arrayCol.join();                                                                                         // Can't iterate over an object therefor I splited the elements and then joined them together to create array
+  arrayCol = arrayCol.split(",");
+  
+  // <----- Check for empty columns and removes them, also search for email column ----->
+  for(nextNum; nextNum <= arrayCol.length-1; nextNum++){
+    numNotEmpCol++;
+    if(arrayCol[nextNum] == ""){
+      import.deleteColumn(numNotEmpCol);
+      numNotEmpCol--;
+      emptyCol++;
+    }
+  }
+  
+  arrayCol = import.getRange(1, 1, 1, numNotEmpCol).getValues();                                                       // Reassign array so it takes names of columns only if they are not empty (after validating by above for loop)
+  arrayCol = arrayCol.join(',');
+  arrayCol = arrayCol.split(',');
+  
+  for(nextNum = 0; nextNum <= arrayCol.length -1; nextNum++){                                                          // Set nextNum to 0
+    if(arrayCol[nextNum].match(/.*mail.*/gi)){
+      mailCol = nextNum +1;                                                                                            // Stores Col number in which emails are saved in impor sheet
+      arrayCol.splice(nextNum,1);
+    }
+  }
+  
+  // <----- Moving e-mail to first column ----->
+  if(mailCol != 1){
+    var mails = import.getRange(1, mailCol, numRow, 1).getValues();
+    import.deleteColumn(mailCol);
+    import.insertColumnBefore(1);
+    import.getRange(1, 1, numRow, 1).setDisplayValues(mails);
+  }
+  
+  Logger.log('\n mail: ' + mailCol + '\n number of columns: ' + numCol + '\n number of rows: ' + numRow);
+  
+  //  createQuery(numCol, numRow);
+  Logger.log(numCol);
+  Logger.log(numRow);
+}
+
+function createQuery(){
+  clearSheet('afterValidation');
+  clearSheet('invalid');
+  
+  var valQuery = "QUERY('import'!1:" + '28' + ', "' + 'SELECT * WHERE A LIKE' + " '%@%._%_%' OR A LIKE '%@%._%_%_%'" + '")';
+  var invQuery = "QUERY('import'!1:" + '28' + ', "' + 'SELECT * WHERE NOT (A LIKE' + " '%@%._%_%' OR A LIKE '%@%._%_%_%'" + ')")';
+  
+  afterValidation.getRange(1,1).setFormula(valQuery);
+  afterValidation.getRange(1, 1, 7, 18).getValues();
+  
+  
+}
+
+// <----- Informs user on number of deleted columns ----->
+function informUser(emptyCol){
+  //
+  //    if(emptyCol != 0){
+  //        Logger.log(emptyCol);
+  //        ui.alert('There were ' + emptyCol + ' columns with no name, which has been removed' );
+  //    }
+  //    //  <----- Alert for user ----->
+  //
+  //  if( numNotEmpCol === 1){
+  //    ui.alert('There is: ' + 1 + ' column' + '\n Script has found: ' + 9 + ' inccorrect rows \n which have been moved, to "after_script" tab' );
+  //  }else{
+  //    ui.alert('There are: ' + numNotEmpCol + ' columns' + '\n Script has found: ' + 9 + ' inccorrect rows \n which have been moved, to "after_script" tab' );
+  //  };
+}
